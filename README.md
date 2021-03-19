@@ -56,7 +56,7 @@ Same, but with streaming mode (we just set `"stream": true` in the handler):
 
 ## Caddyfile
 
-This module has Caddyfile support. It registers the `replace` directive. Make sure to [order]() the handler directive in the correct place in the middleware chain; usually this works well:
+This module has Caddyfile support. It registers the `replace` directive. Make sure to [order](https://caddyserver.com/docs/caddyfile/directives#directive-order) the handler directive in the correct place in the middleware chain; usually this works well:
 
 ```
 {
