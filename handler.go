@@ -51,7 +51,7 @@ type Handler struct {
 	// can break HTTP/2 streams.
 	Stream bool `json:"stream,omitempty"`
 
-	transformChain transform.Transformer
+	transformerPool *sync.Pool
 }
 
 // CaddyModule returns the Caddy module information.
@@ -85,29 +85,35 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	// construct each transformation
-	transforms := make([]transform.Transformer, 0, len(h.Replacements))
-	for _, repl := range h.Replacements {
-		var tr transform.Transformer
-		if repl.re != nil {
-			tr = replace.RegexpString(repl.re, repl.Replace)
-		} else {
-			tr = replace.String(repl.Search, repl.Replace)
-		}
-		transforms = append(transforms, tr)
+	h.transformerPool = &sync.Pool{
+		New: func() interface{} {
+			transforms := make([]transform.Transformer, len(h.Replacements))
+			for i, repl := range h.Replacements {
+				if repl.re != nil {
+					transforms[i] = replace.RegexpString(repl.re, repl.Replace)
+				} else {
+					transforms[i] = replace.String(repl.Search, repl.Replace)
+				}
+			}
+			return transform.Chain(transforms...)
+		},
 	}
-	h.transformChain = transform.Chain(transforms...)
 
 	return nil
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+
+	tr := h.transformerPool.Get().(transform.Transformer)
+	tr.Reset()
+	defer h.transformerPool.Put(tr)
+
 	if h.Stream {
 		// don't buffer response body, perform streaming replacement
 		fw := &replaceWriter{
 			ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w},
-			tw:                    transform.NewWriter(w, h.transformChain),
+			tw:                    transform.NewWriter(w, tr),
 			handler:               h,
 		}
 		defer fw.tw.Close()
@@ -133,7 +139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	// TODO: could potentially use transform.Append here with a pooled byte slice as buffer?
-	result, _, err := transform.Bytes(h.transformChain, rec.Buffer().Bytes())
+	result, _, err := transform.Bytes(tr, rec.Buffer().Bytes())
 	if err != nil {
 		return err
 	}
