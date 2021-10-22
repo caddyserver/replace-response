@@ -90,7 +90,11 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 			transforms := make([]transform.Transformer, len(h.Replacements))
 			for i, repl := range h.Replacements {
 				if repl.re != nil {
-					transforms[i] = replace.RegexpString(repl.re, repl.Replace)
+					tr := replace.RegexpString(repl.re, repl.Replace)
+
+					// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
+					tr.MaxMatchSize = 2048
+					transforms[i] = tr
 				} else {
 					transforms[i] = replace.String(repl.Search, repl.Replace)
 				}
