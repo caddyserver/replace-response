@@ -50,8 +50,6 @@ type Handler struct {
 	// is impossible without buffering, and getting it wrong
 	// can break HTTP/2 streams.
 	Stream bool `json:"stream,omitempty"`
-
-	transformChain transform.Transformer
 }
 
 // CaddyModule returns the Caddy module information.
@@ -85,7 +83,14 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	// construct each transformation
+	return nil
+}
+
+// This assumes replacements have been prepared by the Provision func.
+// It is unsafe to use replace.RegexpString concurrently because it is stateful.
+// As a work-around, we must create a transformer chain for each request, which
+// is safe and cheap enough.
+func (h *Handler) newTransformerChain() transform.Transformer {
 	transforms := make([]transform.Transformer, 0, len(h.Replacements))
 	for _, repl := range h.Replacements {
 		var tr transform.Transformer
@@ -96,18 +101,18 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 		transforms = append(transforms, tr)
 	}
-	h.transformChain = transform.Chain(transforms...)
-
-	return nil
+	return transform.Chain(transforms...)
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	transformerChain := h.newTransformerChain()
+
 	if h.Stream {
 		// don't buffer response body, perform streaming replacement
 		fw := &replaceWriter{
 			ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w},
-			tw:                    transform.NewWriter(w, h.transformChain),
+			tw:                    transform.NewWriter(w, transformerChain),
 			handler:               h,
 		}
 		defer fw.tw.Close()
@@ -133,7 +138,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	// TODO: could potentially use transform.Append here with a pooled byte slice as buffer?
-	result, _, err := transform.Bytes(h.transformChain, rec.Buffer().Bytes())
+	result, _, err := transform.Bytes(transformerChain, rec.Buffer().Bytes())
 	if err != nil {
 		return err
 	}
