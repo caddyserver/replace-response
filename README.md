@@ -105,3 +105,7 @@ replace {
 	A B
 }
 ```
+
+## Limitations:
+
+Regex matches longer than 2kb will not be replaced.
