@@ -108,4 +108,10 @@ replace {
 
 ## Limitations:
 
-Regex matches longer than 2kb will not be replaced.
+- Regex matches longer than 2kb will not be replaced.
+
+- Compressed responses (e.g. from an upstream proxy which gzipped the response body) will not be decoded before attempting to replace. To work around this, you may send the `Accept-Encoding: identity` request header to the upstream to tell it not to compress the response. For example:
+
+      reverse_proxy localhost:8080 {
+          header_up Accept-Encoding identity
+      }
