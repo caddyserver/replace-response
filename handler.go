@@ -120,8 +120,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			tw:                    transform.NewWriter(w, tr),
 			handler:               h,
 		}
-		defer fw.tw.Close()
-		return next.ServeHTTP(fw, r)
+		err := next.ServeHTTP(fw, r)
+		if err != nil {
+			return err
+		}
+		fw.tw.Close()
+		return nil
 	}
 
 	// get a buffer to hold the response body
