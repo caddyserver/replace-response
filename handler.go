@@ -124,6 +124,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		if err != nil {
 			return err
 		}
+		// only close if there is no error; see PR #21
+		// at time of writing, Close() only flushes remaining bytes, but
+		// this ends up calling WriteHeader() even if we don't want that
 		fw.tw.Close()
 		return nil
 	}
