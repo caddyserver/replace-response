@@ -85,18 +85,23 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
+	placeholderRepl := ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+
 	h.transformerPool = &sync.Pool{
 		New: func() interface{} {
 			transforms := make([]transform.Transformer, len(h.Replacements))
 			for i, repl := range h.Replacements {
+				finalReplace := placeholderRepl.ReplaceKnown(repl.Replace, "")
+
 				if repl.re != nil {
-					tr := replace.RegexpString(repl.re, repl.Replace)
+					tr := replace.RegexpString(repl.re, finalReplace)
 
 					// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
 					tr.MaxMatchSize = 2048
 					transforms[i] = tr
 				} else {
-					transforms[i] = replace.String(repl.Search, repl.Replace)
+					finalSearch := placeholderRepl.ReplaceKnown(repl.Search, "")
+					transforms[i] = replace.String(finalSearch, finalReplace)
 				}
 			}
 			return transform.Chain(transforms...)
