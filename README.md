@@ -7,6 +7,8 @@ By default, this module operates in "buffer" mode. This is not very memory-effic
 
 Note: This handler cannot perform replacements on compressed content. If your response comes from a proxied backend that supports compression, you will either have to decompress it in a response handler chain before this handler runs, or disable from the backend. One easy way to ask the backend to _not_ compress the response is to set the `Accept-Encoding` header to `identity`, for example: `header_up Accept-Encoding identity` (in your Caddyfile, in the `reverse_proxy` block).
 
+This module supports the use of placeholders in the `search` and `replace` arguments (but not regexes).
+
 **Module name:** `http.handlers.replace_response`
 
 
