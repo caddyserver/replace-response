@@ -85,7 +85,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	placeholderRepl := ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	placeholderRepl := caddy.NewReplacer()
 
 	h.transformerPool = &sync.Pool{
 		New: func() interface{} {
