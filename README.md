@@ -71,7 +71,7 @@ This module has Caddyfile support. It registers the `replace` directive. Make su
 Syntax:
 
 ```
-replace [stream | [re] <search> <replace>] {
+replace [<matcher>] [stream | [re] <search> <replace>] {
 	stream
 	[re] <search> <replace>
 }
@@ -79,6 +79,7 @@ replace [stream | [re] <search> <replace>] {
 
 - `re` indicates a regular expression instead of substring.
 - `stream` enables streaming mode.
+- Note that you can use a matcher token to filter which requests have replacements performed.
 
 Simple substring substitution:
 
