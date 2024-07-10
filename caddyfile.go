@@ -33,16 +33,19 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
-//     replace [stream | [re] <search> <replace>] {
-//          stream
-//          [re] <search> <replace>
-//     }
+//	replace [stream | [re] <search> <replace>] {
+//	    stream
+//		match {
+//			header Content-Type application/json*
+//		}
+//	    [re] <search> <replace>
+//	}
 //
 // If 're' is specified, the search string will be treated as a regular expression.
 // If 'stream' is specified, the replacement will happen without buffering the
 // whole response body; this might remove the Content-Length header.
 func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	line := func() error {
+	line := func(isBlock bool) error {
 		var repl Replacement
 
 		switch d.Val() {
@@ -60,8 +63,21 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if !d.AllArgs(&repl.SearchRegexp, &repl.Replace) {
 				return d.ArgErr()
 			}
-
 		default:
+			if isBlock && d.Val() == "match" {
+				if h.Matcher != nil {
+					return d.Err("match block already specified")
+				}
+				responseMatchers := make(map[string]caddyhttp.ResponseMatcher)
+				err := caddyhttp.ParseNamedResponseMatcher(d.NewFromNextSegment(), responseMatchers)
+				if err != nil {
+					return err
+				}
+				matcher := responseMatchers["match"]
+				h.Matcher = &matcher
+				return nil
+			}
+
 			repl.Search = d.Val()
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -78,12 +94,12 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 
 	for d.Next() {
 		if d.NextArg() {
-			if err := line(); err != nil {
+			if err := line(false); err != nil {
 				return err
 			}
 		}
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			if err := line(); err != nil {
+			if err := line(true); err != nil {
 				return err
 			}
 		}

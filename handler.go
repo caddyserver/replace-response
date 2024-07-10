@@ -36,8 +36,6 @@ func init() {
 	caddy.RegisterModule(Handler{})
 }
 
-// TODO: response matching? Should it be per-replacement or per group of replacements? probably per-handler (a handler is already a group of replacements)...
-
 // Handler manipulates response bodies by performing
 // substring or regex replacements.
 type Handler struct {
@@ -50,6 +48,9 @@ type Handler struct {
 	// is impossible without buffering, and getting it wrong
 	// can break HTTP/2 streams.
 	Stream bool `json:"stream,omitempty"`
+
+	// Only run replacements on responses that match against this ResponseMmatcher.
+	Matcher *caddyhttp.ResponseMatcher `json:"match,omitempty"`
 
 	transformerPool *sync.Pool
 }
@@ -122,7 +123,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		// don't buffer response body, perform streaming replacement
 		fw := &replaceWriter{
 			ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w},
-			tw:                    transform.NewWriter(w, tr),
+			tr:                    tr,
 			handler:               h,
 		}
 		err := next.ServeHTTP(fw, r)
@@ -132,7 +133,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		// only close if there is no error; see PR #21
 		// as of May 2023, Close() only flushes remaining bytes, but
 		// this ends up calling WriteHeader() even if we don't want that
-		fw.tw.Close()
+		fw.Close()
 		return nil
 	}
 
@@ -142,7 +143,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	defer bufPool.Put(respBuf)
 
 	// set up the response recorder
-	shouldBuf := func(_ int, _ http.Header) bool { return true }
+	shouldBuf := func(status int, headers http.Header) bool {
+		if h.Matcher != nil {
+			return h.Matcher.Match(status, headers)
+		} else {
+			// Always replace if no matcher is specified
+			return true
+		}
+	}
 	rec := caddyhttp.NewResponseRecorder(w, respBuf, shouldBuf)
 
 	// collect the response from upstream
@@ -151,7 +159,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return err
 	}
 	if !rec.Buffered() {
-		return nil // should never happen, but whatever
+		return nil // Skipped, no need to replace
 	}
 
 	// TODO: could potentially use transform.Append here with a pooled byte slice as buffer?
@@ -195,6 +203,7 @@ type replaceWriter struct {
 	*caddyhttp.ResponseWriterWrapper
 	wroteHeader bool
 	tw          io.WriteCloser
+	tr          transform.Transformer
 	handler     *Handler
 }
 
@@ -204,9 +213,12 @@ func (fw *replaceWriter) WriteHeader(status int) {
 	}
 	fw.wroteHeader = true
 
-	// we don't know the length after replacements since
-	// we're not buffering it all to find out
-	fw.Header().Del("Content-Length")
+	if fw.handler.Matcher == nil || fw.handler.Matcher.Match(status, fw.ResponseWriterWrapper.Header()) {
+		// we don't know the length after replacements since
+		// we're not buffering it all to find out
+		fw.Header().Del("Content-Length")
+		fw.tw = transform.NewWriter(fw.ResponseWriterWrapper, fw.tr)
+	}
 
 	fw.ResponseWriterWrapper.WriteHeader(status)
 }
@@ -215,7 +227,20 @@ func (fw *replaceWriter) Write(d []byte) (int, error) {
 	if !fw.wroteHeader {
 		fw.WriteHeader(http.StatusOK)
 	}
-	return fw.tw.Write(d)
+
+	if fw.tw != nil {
+		return fw.tw.Write(d)
+	} else {
+		return fw.ResponseWriterWrapper.Write(d)
+	}
+}
+
+func (fw *replaceWriter) Close() error {
+	if fw.tw != nil {
+		// Close if we have a transform writer, the underlying one does not need to be closed.
+		return fw.tw.Close()
+	}
+	return nil
 }
 
 var bufPool = sync.Pool{
