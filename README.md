@@ -57,6 +57,23 @@ Same, but with streaming mode (we just set `"stream": true` in the handler):
 }
 ```
 
+With a response matcher:
+```json
+{
+	"handler": "replace_response",
+	"replacements": [
+		{
+			"search": "Foo",
+			"replace": "Bar"
+		}
+	],
+	"match": {
+		"headers": {
+			"Content-Type": ["application/json*"]
+		}
+	}
+}
+```
 
 ## Caddyfile
 
@@ -73,12 +90,16 @@ Syntax:
 ```
 replace [<matcher>] [stream | [re] <search> <replace>] {
 	stream
+	match {
+		header Content-Type application/json*
+	}
 	[re] <search> <replace>
 }
 ```
 
 - `re` indicates a regular expression instead of substring.
 - `stream` enables streaming mode.
+- `match` defines a [response matcher](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#response-matcher). If defined, replacements in this directive will only be performed on responses that match the matcher.
 - Note that you can use a matcher token to filter which requests have replacements performed.
 
 Simple substring substitution:
