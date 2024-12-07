@@ -53,6 +53,8 @@ type Handler struct {
 	Matcher *caddyhttp.ResponseMatcher `json:"match,omitempty"`
 
 	transformerPool *sync.Pool
+
+	repl *caddy.Replacer
 }
 
 // CaddyModule returns the Caddy module information.
@@ -95,14 +97,25 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 				finalReplace := placeholderRepl.ReplaceKnown(repl.Replace, "")
 
 				if repl.re != nil {
-					tr := replace.RegexpString(repl.re, finalReplace)
+					// This would require the following method in the upstream icholy/replace/replace.go
+					// func RegexpStringWithLateBinding(re *regexp.Regexp, template string, 
+					// 	binding func(string) string) *RegexpTransformer {
+					// 		return RegexpIndexFunc(re, func(src []byte, index []int) []byte {
+					// 			return re.Expand(nil, []byte(binding(template)), src, index)
+					// 	})
+					// }
+					tr := replace.RegexpStringWithLateBinding(repl.re, finalReplace, h.ReplacePlaceholders)
 
 					// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
 					tr.MaxMatchSize = 2048
 					transforms[i] = tr
 				} else {
 					finalSearch := placeholderRepl.ReplaceKnown(repl.Search, "")
-					transforms[i] = replace.String(finalSearch, finalReplace)
+					// This would require the following method in the upstream icholy/replace/replace.go
+					// func StringWithLateBinding(old, new string, binding func(string) string) Transformer {
+					// 	return Bytes([]byte(binding(old)), []byte(binding(new)))
+					// }
+					transforms[i] = replace.StringWithLateBinding(finalSearch, finalReplace, h.ReplacePlaceholders)
 				}
 			}
 			return transform.Chain(transforms...)
@@ -112,9 +125,17 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	return nil
 }
 
+// Wrapper function for replace transformer to replace placeholders with dynamic strings 
+func (h *Handler) ReplacePlaceholders(dst string) string {
+	return h.repl.ReplaceKnown(dst, "")
+}
+
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	h.repl = repl
+	
 	tr := h.transformerPool.Get().(transform.Transformer)
 	tr.Reset()
 	defer h.transformerPool.Put(tr)
