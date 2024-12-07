@@ -97,14 +97,10 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 				finalReplace := placeholderRepl.ReplaceKnown(repl.Replace, "")
 
 				if repl.re != nil {
-					// This would require the following method in the upstream icholy/replace/replace.go
-					// func RegexpStringWithLateBinding(re *regexp.Regexp, template string, 
-					// 	binding func(string) string) *RegexpTransformer {
-					// 		return RegexpIndexFunc(re, func(src []byte, index []int) []byte {
-					// 			return re.Expand(nil, []byte(binding(template)), src, index)
-					// 	})
-					// }
-					tr := replace.RegexpStringWithLateBinding(repl.re, finalReplace, h.ReplacePlaceholders)
+					tr := replace.RegexpIndexFunc(repl.re, func(src []byte, index []int) []byte {
+						template := h.ReplacePlaceholders(finalReplace)
+						return repl.re.Expand(nil, []byte(template), src, index)
+					})
 
 					// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
 					tr.MaxMatchSize = 2048
