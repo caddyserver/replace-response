@@ -22,6 +22,7 @@ import (
 
 func init() {
 	httpcaddyfile.RegisterHandlerDirective("replace", parseCaddyfile)
+	httpcaddyfile.RegisterDirectiveOrder("replace", httpcaddyfile.After, "encode")
 }
 
 // parseCaddyfile unmarshals tokens from h into a new Handler.

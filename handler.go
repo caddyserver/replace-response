@@ -29,6 +29,8 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/icholy/replace"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/text/transform"
 )
 
@@ -52,9 +54,7 @@ type Handler struct {
 	// Only run replacements on responses that match against this ResponseMmatcher.
 	Matcher *caddyhttp.ResponseMatcher `json:"match,omitempty"`
 
-	transformerPool *sync.Pool
-
-	repl *caddy.Replacer
+	logger *zap.Logger
 }
 
 // CaddyModule returns the Caddy module information.
@@ -67,6 +67,8 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 
 // Provision implements caddy.Provisioner.
 func (h *Handler) Provision(ctx caddy.Context) error {
+	h.logger = ctx.Logger()
+
 	if len(h.Replacements) == 0 {
 		return fmt.Errorf("no replacements configured")
 	}
@@ -88,49 +90,21 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	placeholderRepl := caddy.NewReplacer()
-
-	h.transformerPool = &sync.Pool{
-		New: func() interface{} {
-			transforms := make([]transform.Transformer, len(h.Replacements))
-			for i, repl := range h.Replacements {
-				finalReplace := placeholderRepl.ReplaceKnown(repl.Replace, "")
-
-				if repl.re != nil {
-					tr := replace.RegexpIndexFunc(repl.re, func(src []byte, index []int) []byte {
-						template := h.repl.ReplaceKnown(finalReplace, "")
-						return repl.re.Expand(nil, []byte(template), src, index)
-					})
-
-					// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
-					tr.MaxMatchSize = 2048
-					transforms[i] = tr
-				} else {
-					finalSearch := placeholderRepl.ReplaceKnown(repl.Search, "")
-					transforms[i] = replace.String(
-						h.repl.ReplaceKnown(finalSearch, ""),
-						h.repl.ReplaceKnown(finalReplace, ""),
-					)
-				}
-			}
-			return transform.Chain(transforms...)
-		},
-	}
-
 	return nil
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-
-	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-	h.repl = repl
-	
-	tr := h.transformerPool.Get().(transform.Transformer)
-	tr.Reset()
-	defer h.transformerPool.Put(tr)
-
 	if h.Stream {
+		if c := h.logger.Check(zapcore.DebugLevel, "streaming body replacement"); c != nil {
+			c.Write(
+				zap.Any("replacements", h.Replacements),
+				zap.Object("request", caddyhttp.LoggableHTTPRequest{Request: r}),
+			)
+		}
+
+		tr := h.makeTransformer(r)
+
 		// don't buffer response body, perform streaming replacement
 		fw := &replaceWriter{
 			ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w},
@@ -145,6 +119,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		// as of May 2023, Close() only flushes remaining bytes, but
 		// this ends up calling WriteHeader() even if we don't want that
 		fw.Close()
+
 		return nil
 	}
 
@@ -170,8 +145,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return err
 	}
 	if !rec.Buffered() {
-		return nil // Skipped, no need to replace
+		// Skipped, no need to replace
+		if c := h.logger.Check(zapcore.DebugLevel, "not buffering body; skipping replacement"); c != nil {
+			c.Write(
+				zap.Int("response_status", rec.Status()),
+				zap.Object("request", caddyhttp.LoggableHTTPRequest{Request: r}),
+			)
+		}
+		return nil
 	}
+
+	if c := h.logger.Check(zapcore.DebugLevel, "buffered body replacement"); c != nil {
+		c.Write(
+			zap.Any("replacements", h.Replacements),
+			zap.Object("request", caddyhttp.LoggableHTTPRequest{Request: r}),
+		)
+	}
+
+	tr := h.makeTransformer(r)
 
 	// TODO: could potentially use transform.Append here with a pooled byte slice as buffer?
 	result, _, err := transform.Bytes(tr, rec.Buffer().Bytes())
@@ -190,6 +181,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	w.Write(result)
 
 	return nil
+}
+
+func (h *Handler) makeTransformer(req *http.Request) transform.Transformer {
+	reqReplacer := req.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+
+	transforms := make([]transform.Transformer, len(h.Replacements))
+	for i, repl := range h.Replacements {
+		if repl.re != nil {
+			tr := replace.RegexpIndexFunc(repl.re, func(src []byte, index []int) []byte {
+				template := reqReplacer.ReplaceKnown(repl.Replace, "")
+				return repl.re.Expand(nil, []byte(template), src, index)
+			})
+			// See: https://github.com/icholy/replace/issues/5#issuecomment-949757616
+			tr.MaxMatchSize = 2048
+			transforms[i] = tr
+		} else {
+			transforms[i] = replace.String(
+				reqReplacer.ReplaceKnown(repl.Search, ""),
+				reqReplacer.ReplaceKnown(repl.Replace, ""),
+			)
+		}
+	}
+	return transform.Chain(transforms...)
 }
 
 // Replacement is either a substring or regular expression replacement

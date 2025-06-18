@@ -77,13 +77,7 @@ With a response matcher:
 
 ## Caddyfile
 
-This module has Caddyfile support. It registers the `replace` directive. Make sure to [order](https://caddyserver.com/docs/caddyfile/directives#directive-order) the handler directive in the correct place in the middleware chain; usually this works well:
-
-```
-{
-	order replace after encode
-}
-```
+This module has Caddyfile support. It registers the `replace` directive, by default to be after the standard `encode` directive. Make sure to change it with the [order](https://caddyserver.com/docs/caddyfile/directives#directive-order) global option in case that is not suitable for your needs.
 
 Syntax:
 
