@@ -170,8 +170,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return err
 	}
 
-	// make sure length is correct, otherwise bad things can happen
-	if w.Header().Get("Content-Length") != "" {
+	// make sure length is correct, otherwise bad things can happen;
+	// responses without a body (HEAD, 1xx, 204, 304) can't tell us the
+	// length after replacement, so drop the header rather than
+	// advertising the length of the empty buffer, and a 2xx response to
+	// CONNECT must not have one at all (RFC 9110 §8.6)
+	connectSuccess := r.Method == http.MethodConnect && rec.Status() >= 200 && rec.Status() <= 299
+	if r.Method == http.MethodHead || connectSuccess || !bodyAllowedForStatus(rec.Status()) {
+		w.Header().Del("Content-Length")
+	} else if w.Header().Get("Content-Length") != "" {
 		w.Header().Set("Content-Length", strconv.Itoa(len(result)))
 	}
 
@@ -266,6 +273,20 @@ func (fw *replaceWriter) Close() error {
 		return fw.tw.Close()
 	}
 	return nil
+}
+
+// bodyAllowedForStatus reports whether a response with the given
+// status may include a body, per RFC 9110 §6.4.1.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 var bufPool = sync.Pool{
